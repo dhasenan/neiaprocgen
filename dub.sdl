@@ -1,0 +1,22 @@
+name "gen"
+description "Procedural generation stuff for StargateQuest!"
+authors "dhasenan"
+copyright "Copyright © 2019, dhasenan"
+license "proprietary"
+dependency "dosimplex" version="0.3.2-beta"
+dependency "arsd-official" version="3.0.1"
+stringImportPaths "import"
+
+configuration "executable" {
+    version "DummyPoissonSample"
+    targetType "executable"
+}
+
+configuration "unittest" {
+    dependency "unit-threaded" version="0.9.4"
+    mainSourceFile "bin/ut.d"
+    excludedSourceFiles "source/app.d"
+    targetType "executable"
+    //preBuildCommands "dub run unit-threaded -c gen_ut_main -- -f bin/ut.d"
+}
+

@@ -1,0 +1,8 @@
+{
+	"fileVersion": 1,
+	"versions": {
+		"arsd-official": "3.0.1",
+		"dosimplex": "0.3.2-beta",
+		"unit-threaded": "0.9.4"
+	}
+}
