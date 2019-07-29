@@ -3,8 +3,8 @@ description "Procedural generation stuff for StargateQuest!"
 authors "dhasenan"
 copyright "Copyright © 2019, dhasenan"
 license "proprietary"
-dependency "dosimplex" version="0.3.2-beta"
-dependency "arsd-official" version="3.0.1"
+#dependency "dosimplex" version="0.3.2-beta"
+#dependency "arsd-official" version="3.0.1"
 stringImportPaths "import"
 
 configuration "executable" {
