@@ -99,14 +99,17 @@ class Layer
 {
     static Layer
         giants,
-        dwarfs;
+        dwarfs,
+        minidwarfs;
 
     static this()
     {
         // Let's say 3% of stars are giants.
         giants = new Layer(1, 8000, 0, -13, 0.03);
-        // And 80% are dwarfs large enough to bother with.
-        dwarfs = new Layer(2, 500, 10, 0, 0.8);
+        // 5% are heavy dwarfs.
+        dwarfs = new Layer(2, 500, 5, 0, 0.05);
+        // 75% are small dwarfs, but only 10% are bright enough to be visible.
+        minidwarfs = new Layer(2, 50, 7, 5, 0.1);
     }
 
     ushort id;
@@ -129,33 +132,45 @@ class Layer
             Galaxy g, Point loc, Point d, Octree!Star higher, real minBrightnessToSee = 6)
     {
         // Find the bounding volume.
-        // We can do this in a closed-form way, but let's do it this way to be safer.
-        Star test;
-        test.absoluteMagnitude = brightnessMaximum;
-        test.loc = Point(0, 0, 0);
-        real maxDistance = 100_000;
-        for (real dist = 100; dist < 100_000; dist *= E)
+        // Mv = m - 2.5 log[ (d/10)² ].
+        // log10[(d/10)²] = (m - Mv) / 2.5
+        // (d/10)² = 10^((m - Mv) / 2.5)
+        // d = 10 * sqrt(10^((m - Mv) / 2.5))
+        import std.typecons : Tuple;
+        alias TT = Tuple!(real, real);
+        auto f = iota(cast(real)50, cast(real)10_000)
+            .map!((x) {
+                Star test;
+                test.absoluteMagnitude = brightnessMaximum;
+                return TT(test.brightnessAt(x), x);
+            })
+            .assumeSorted
+            .upperBound(TT(6, 0));
+        real maxDistanceA = f.empty ? 10_000 : f.front[1];
+
+        infof("brightnessMaximum: %s minBrightnessToSee: %s",
+                brightnessMaximum, minBrightnessToSee);
+        real maxDistanceB = 10 * sqrt(10 ^^ (minBrightnessToSee - brightnessMaximum) / 2.5);
+        infof("the farthest away you can see a %s star is %s or %s", brightnessMaximum,
+                maxDistanceA, maxDistanceB);
         {
-            if (test.brightnessAt(dist) > minBrightnessToSee)
-            {
-                maxDistance = dist;
-                break;
-            }
+            Star test;
+            test.absoluteMagnitude = brightnessMaximum;
+            infof("sanity check: at %s, brightness would be %s", maxDistanceA,
+                    test.brightnessAt(maxDistanceA));
+            infof("sanity check: at %s, brightness would be %s", maxDistanceB,
+                    test.brightnessAt(maxDistanceB));
         }
-        // absolute brightness = apparent brightness + 5 - 5 * log(distance/1pc)
-        // we want the max distance to see the star
-        // 5log(dist/1pc) = apparent - absolute - 5
-        // dist/1pc = e^(apparent/5 - absolute/5 - 1)
-        infof("the farthest away you can see a %s star is %s", brightnessMaximum, maxDistance);
+        auto maxDistance = star.misc.min(maxDistanceA, maxDistanceB);
 
         // We need to grab a cone with point angle = 90° and height=maxDistance
         // The sides are maxDistance/cos(45°) long (which happens to be sqrt(2)).
-        Point mdp = Point(maxDistance, maxDistance, maxDistance) *  sqrt(cast(real)2.0);
+        Point mdp = Point(maxDistance, maxDistance, maxDistance) * sqrt(cast(real)2.0);
         auto volume = Volume(loc - mdp, loc + mdp);
         auto v2 = Volume(loc - mdp * 1.5, loc + mdp * 1.5);
         auto output = new Octree!Star(v2, maxDistance ^^ 0.5);
         poissonSample!(Star, p => genStar(p))(rndGen, higher, output, volume,
-                (g.starSpacing / portionOfStarsInLayer) ^^ (1.0/3));
+                (g.starSpacing / (portionOfStarsInLayer ^^ (1.0/3))));
         infof("finished generating stars on layer %s, volume %s", id, volume);
         return output;
     }
@@ -529,7 +544,8 @@ void generateStarmap(Galaxy g, Point loc, Point dir, real minBrightness, string 
             //infof("skipping star at %s (outside cone)", starloc);
             return;
         }
-        f.writefln(`<circle r="0.5" cx="%s" cy="%s" fill="%s" />`, p.y, p.z, star.svgColor(dist));
+        f.writefln(`<circle r="0.5" cx="%s" cy="%s" fill="%s" />`, p.y, p.z, star.svgColor(dist,
+                    minBrightness));
         drawn++;
         {
             f.flush;
@@ -544,20 +560,51 @@ void generateStarmap(Galaxy g, Point loc, Point dir, real minBrightness, string 
 </svg>`);
 }
 
+real starDistance(real absoluteMagnitude, real apparentMagnitude) pure
+{
+    // Mv = m - 2.5 log[(d/10)^2]
+    // 2.5 (m - Mv) = log10((d/10)^2)
+    // 10^(2.5 * (m - Mv)) = (d/10)^2
+    // sqrt(10^(2.5 * (m - Mv))) = d/10
+    // d = sqrt(10^(2.5 * (m - Mv))) * 10
+    return 10 * sqrt(10 ^^ (2.5 * (apparentMagnitude - absoluteMagnitude)));
+}
+
 struct Star
 {
     Point loc;
     real absoluteMagnitude;
     real temperature;
 
-    string svgColor(real distance) { return "white"; }
+    string svgColor(real distance, real minBrightnessToSee)
+    {
+        import std.format : format;
+        auto b = brightnessAt(distance);
+        auto limit = star.misc.min(-2, minBrightnessToSee - 8);
+        real opacity;
+        if (b <= limit)
+        {
+            opacity = 1;
+        }
+        else if (b >= minBrightnessToSee)
+        {
+            opacity = 0;
+        }
+        else
+        {
+            auto width = minBrightnessToSee - limit;
+            opacity = (minBrightnessToSee - b) / width;
+        }
+        // Lerp color based on control points for temperature
+        // Alpha based on distance
+        return "hsla(%s,%s%%,%s%%,%s)".format(60, 100, 100, opacity);
+    }
 
     real brightnessAt(real distance)
     {
-        // distance = (10 parsecs) * 10^^((apparent brightness - absolute magnitude)/5)
-        // log10(distance/10pc) * 5 = apparent brightness - absolute magnitude
-        // apparent brightness = log10(distance/10pc) * 5 + absolute magnitude
-        return log10(distance / (10 * parsecToLightyear)) * 5 + absoluteMagnitude;
+        // M_v = m - 2.5 log ((d/10)²)
+        // m = M_v + 2.5 log ((d/10)²)
+        return absoluteMagnitude + 2.5 * log10(distance / 3.23);
     }
 }
 
